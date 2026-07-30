@@ -9,6 +9,8 @@ from services.document_schema.provider_adapters.paddle.context import PaddlePage
 from services.document_schema.provider_adapters.paddle.page_trace import build_layout_box_lookup
 from services.document_schema.provider_adapters.paddle.page_trace import build_page_trace
 from services.document_schema.provider_adapters.paddle.relations import classify_page_blocks
+from services.document_schema.provider_adapters.paddle.table_content_splitter import is_navigation_table
+from services.document_schema.provider_adapters.paddle.table_content_splitter import split_navigation_table
 
 
 def _provider_allows_body_repair(pruned: dict) -> bool:
@@ -92,6 +94,26 @@ def build_page_spec(
         )
         for order, _block in enumerate(page_context["parsing_res_list"])
     ]
+    # Split navigation/layout table blocks into individual text blocks so
+    # the text inside them is not gated by policy.translate=False.
+    if any(is_navigation_table(b) for b in blocks):
+        expanded: list[dict] = []
+        next_order = 0
+        for block in blocks:
+            if is_navigation_table(block):
+                split = split_navigation_table(
+                    block, page_index=page_index, start_order=next_order,
+                )
+                if split:
+                    expanded.extend(split)
+                    next_order += len(split)
+                    continue
+                # Fall through — keep original block if split returned nothing.
+            block["order"] = next_order
+            block["reading_order"] = next_order
+            expanded.append(block)
+            next_order += 1
+        blocks = expanded
     metadata = build_page_trace(
         page_payload=page_context["page_payload"],
         pruned=page_context["pruned"],
